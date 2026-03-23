@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Research Explorer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h2>🔍 Research Explorer</h2>
+
+<input type="text" id="query" placeholder="Enter keyword or Boolean query">
+<input type="number" id="yearFrom" placeholder="From Year">
+<input type="number" id="yearTo" placeholder="To Year">
+
+<button onclick="searchPapers()">Search</button>
+<button onclick="downloadCSV()">Download CSV</button>
+
+<h3 id="count"></h3>
+
+<div id="results"></div>
+
+<canvas id="chart"></canvas>
+
+<script src="app.js"></script>
+
+</body>
+</html>
