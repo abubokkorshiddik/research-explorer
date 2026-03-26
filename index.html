@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Professional systematic review dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/wordcloud@1.1.0/src/wordcloud2.js"></script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family: 'Segoe UI', Arial, sans-serif; background:#f0f2f5; color:#2d3436; padding:20px; }
@@ -24,17 +25,19 @@
   .abstract { font-size:13px; margin-top:5px; color:#636e72; display:none; padding-left:5px; }
   .show-btn { font-size:12px; color:#0984e3; cursor:pointer; text-decoration:underline; background:none; border:none; padding:0; }
   #loading { display:none; margin:10px 0; font-weight:bold; color:#d63031; }
-  #charts canvas { margin-bottom:20px; background:white; border-radius:8px; padding:10px; }
+  #charts canvas, #wordcloud { margin-bottom:20px; background:white; border-radius:8px; padding:10px; }
   footer { margin-top:30px; text-align:center; font-size:13px; color:#636e72; }
+  .author-filter { font-size:12px; margin-top:5px; cursor:pointer; color:#0984e3; text-decoration:underline; display:inline-block; margin-right:5px; }
+  #showAllAuthor { background:#00b894; margin-left:0; }
 </style>
 </head>
 <body>
 
 <h2>Professional systematic review dashboard</h2>
-<p class="description">This dashboard allows you to search, screen, and summarize relevant publications for systematic reviews. It shows PRISMA counts, article details, abstracts, trends, and top authors, with CSV download support.</p>
+<p class="description">Search, screen, and summarize relevant publications for systematic reviews. Shows PRISMA counts, article details, abstracts, trends, top authors, word cloud, and CSV download support.</p>
 
 <div class="container">
-  <!-- LEFT COLUMN: Search + Table -->
+  <!-- LEFT COLUMN -->
   <div class="left">
     <div class="controls">
       <select id="searchType">
@@ -69,7 +72,7 @@
     </table>
   </div>
 
-  <!-- RIGHT COLUMN: Charts + Meta -->
+  <!-- RIGHT COLUMN -->
   <div class="right">
     <h3>Meta-analysis</h3>
     <div id="meta">Total papers: 0<br>Duplicates removed: 0<br>After year filter: 0</div>
@@ -77,11 +80,13 @@
       <canvas id="trendChart"></canvas>
       <canvas id="authorChart"></canvas>
     </div>
+    <h3>Word cloud</h3>
+    <canvas id="wordcloud" width="300" height="300"></canvas>
   </div>
 </div>
 
 <footer>
-  (c) This dashboard is created by Md. Abu Bokkor Shiddik, Department of Statistics, Begum Rokeya University, Rangpur-5400, Bangladesh.
+  © This dashboard is created by Md. Abu Bokkor Shiddik, Department of Statistics, Begum Rokeya University, Rangpur-5400, Bangladesh.
 </footer>
 
 <script>
@@ -89,6 +94,7 @@ let papers = [];
 let prismaCounts = {retrieved:0, duplicates:0, afterYear:0};
 let trendChartInstance = null;
 let authorChartInstance = null;
+let filteredAuthor = null;
 
 // SEARCH
 async function searchAll() {
@@ -102,9 +108,11 @@ async function searchAll() {
     document.getElementById("loading").style.display = "block";
     papers = [];
     prismaCounts = {retrieved:0, duplicates:0, afterYear:0};
+    filteredAuthor = null;
     displaySummary();
     clearResults();
     clearCharts();
+    clearWordCloud();
 
     try {
         query = cleanQuery(query);
@@ -115,16 +123,14 @@ async function searchAll() {
         prismaCounts.duplicates = prismaCounts.retrieved - papers.length;
 
         papers = filterYear(papers, yearFrom, yearTo);
-
-        // REMOVE ARTICLES WITH NO AUTHORS
         papers = papers.filter(p => p.authors && p.authors.trim() !== "");
-
         prismaCounts.afterYear = papers.length;
 
         displaySummary();
         displayResults();
         drawTrendChart(papers);
         drawAuthorChart(papers);
+        drawWordCloud(papers);
     } catch(err) {
         console.error(err);
         alert("Error fetching papers. Check console.");
@@ -140,8 +146,7 @@ async function fetchCrossRef(query, type) {
     else if(type==="author") url += `&query.author=${encodeURIComponent(query)}`;
     else if(type==="doi") url += `&filter=doi:${encodeURIComponent(query)}`;
     else if(type==="institution") url += `&query.affiliation=${encodeURIComponent(query)}`;
-    else url += `&query=${encodeURIComponent(query)}`; // keyword default
-
+    else url += `&query=${encodeURIComponent(query)}`;
     let res = await fetch(url, { headers:{ "User-Agent":"SystematicReviewDashboard/1.0" } });
     let data = await res.json();
     return data.message.items;
@@ -166,42 +171,22 @@ function mergeData(items){
     });
     return removeDuplicates(merged);
 }
-
-// NORMALIZE TITLE
 function normalizeTitle(title){ return title.trim().toLowerCase().replace(/[^\w\s]/gi,""); }
-
-// REMOVE DUPLICATES
 function removeDuplicates(data){
     let seen = new Set();
-    return data.filter(p=>{
-        if(seen.has(p.title)) return false;
-        seen.add(p.title);
-        return true;
-    });
+    return data.filter(p=>{ if(seen.has(p.title)) return false; seen.add(p.title); return true; });
 }
-
-// FILTER YEAR
 function filterYear(data, from, to){
-    return data.filter(p=>{
-        if(!p.year) return true;
-        return (!from||p.year>=from)&&(!to||p.year<=to);
-    });
+    return data.filter(p=>{ if(!p.year) return true; return (!from||p.year>=from)&&(!to||p.year<=to); });
 }
-
-// GET YEAR PREFER PRINT->ONLINE->CREATED
 function getYear(p){
     return p['published-print']?.['date-parts']?.[0]?.[0]||
            p['published-online']?.['date-parts']?.[0]?.[0]||
            p.created?.['date-parts']?.[0]?.[0]||null;
 }
+function getAuthors(p){ if(!p.author) return ""; return p.author.map(a=>`${a.given||""} ${a.family||""}`.trim()).join("; "); }
 
-// GET AUTHORS
-function getAuthors(p){
-    if(!p.author) return "";
-    return p.author.map(a=>`${a.given||""} ${a.family||""}`.trim()).join("; ");
-}
-
-// DISPLAY SUMMARY
+// DISPLAY
 function displaySummary(){
     document.getElementById("summary").innerText=
         `Total retrieved: ${prismaCounts.retrieved}, Duplicates removed: ${prismaCounts.duplicates}, After year filter: ${prismaCounts.afterYear}`;
@@ -209,10 +194,11 @@ function displaySummary(){
         `Total papers: ${prismaCounts.retrieved}<br>Duplicates removed: ${prismaCounts.duplicates}<br>After year filter: ${prismaCounts.afterYear}`;
 }
 
-// DISPLAY RESULTS
 function displayResults(){
     let tbody=document.getElementById("results");
-    papers.forEach((p,i)=>{
+    tbody.innerHTML="";
+    let data = filteredAuthor ? papers.filter(p=>p.authors.includes(filteredAuthor)) : papers;
+    data.forEach((p,i)=>{
         let row=document.createElement("tr");
         row.innerHTML=`<td>${p.displayTitle}<br>${p.abstract? `<button class="show-btn" onclick="toggleAbstract(${i})">Show abstract</button><div id="abs${i}" class="abstract">${p.abstract}</div>` : ""}</td>
                          <td>${p.authors}</td>
@@ -223,15 +209,10 @@ function displayResults(){
     });
 }
 
-// TOGGLE ABSTRACT
 function toggleAbstract(i){
     let el=document.getElementById(`abs${i}`);
-    if(el.style.display==="none"||el.style.display==="") el.style.display="block";
-    else el.style.display="none";
+    el.style.display=(el.style.display==="none"||el.style.display==="")?"block":"none";
 }
-
-// CLEAR RESULTS
-function clearResults(){ document.getElementById("results").innerHTML=""; }
 
 // DOWNLOAD CSV
 function downloadCSV(){
@@ -245,13 +226,8 @@ function downloadCSV(){
     link.click();
 }
 
-// CLEAR CHARTS
-function clearCharts(){
-    if(trendChartInstance) { trendChartInstance.destroy(); trendChartInstance=null; }
-    if(authorChartInstance) { authorChartInstance.destroy(); authorChartInstance=null; }
-}
-
-// TREND CHART
+// CHARTS
+function clearCharts(){ if(trendChartInstance){trendChartInstance.destroy(); trendChartInstance=null;} if(authorChartInstance){authorChartInstance.destroy(); authorChartInstance=null;} }
 function drawTrendChart(data){
     let count={};
     data.forEach(p=>{ if(p.year) count[p.year]=(count[p.year]||0)+1; });
@@ -264,18 +240,48 @@ function drawTrendChart(data){
         options:{ responsive:true, plugins:{ legend:{ display:true } } }
     });
 }
-
-// TOP AUTHORS CHART
 function drawAuthorChart(data){
     let count={};
     data.forEach(p=>{ p.authors.split(";").forEach(a=>{ let n=a.trim(); if(!n) return; count[n]=(count[n]||0)+1; }); });
-    let top=Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    let top=Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,15);
     let ctx=document.getElementById("authorChart").getContext("2d");
     authorChartInstance=new Chart(ctx,{
         type:"bar",
         data:{ labels:top.map(t=>t[0]), datasets:[{label:"Top Authors", data:top.map(t=>t[1]), backgroundColor:"rgba(255,99,132,0.6)", borderColor:"rgba(200,50,80,1)", borderWidth:1 }]},
-        options:{ responsive:true, indexAxis:'y', plugins:{ legend:{ display:true } } }
+        options:{
+            responsive:true,
+            indexAxis:'y',
+            plugins:{ legend:{ display:false } },
+            onClick: (evt, elements) => {
+                if(elements.length>0){
+                    let idx = elements[0].index;
+                    filteredAuthor = top[idx][0];
+                    displayResults();
+                }
+            }
+        }
     });
+    // add Show all author button
+    if(!document.getElementById("showAllAuthor")){
+        let btn=document.createElement("button");
+        btn.id="showAllAuthor";
+        btn.innerText="Show All";
+        btn.onclick=()=>{ filteredAuthor=null; displayResults(); };
+        document.getElementById("authorChart").parentNode.appendChild(btn);
+    }
+}
+
+// WORD CLOUD
+function clearWordCloud(){ let wc=document.getElementById("wordcloud"); wc.getContext("2d").clearRect(0,0,wc.width,wc.height);}
+function drawWordCloud(data){
+    let text=[];
+    data.forEach(p=>{
+        let combined = p.displayTitle + " " + (p.abstract || "");
+        combined.split(/\s+/).forEach(w=>{
+            if(w.length>3) text.push([w, 1]);
+        });
+    });
+    WordCloud(document.getElementById('wordcloud'), { list:text, gridSize:10, weightFactor:5, backgroundColor:'#ffffff', color:'random-dark' });
 }
 </script>
 
