@@ -13,7 +13,7 @@
   .left, .right { background:white; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
   .left { flex:1 1 60%; min-width:400px; }
   .right { flex:1 1 35%; min-width:300px; }
-  input { padding:8px; margin:5px 5px 5px 0; border-radius:4px; border:1px solid #ccc; width:120px; }
+  select, input { padding:8px; margin:5px 5px 5px 0; border-radius:4px; border:1px solid #ccc; width:140px; }
   button { padding:8px 15px; margin:5px 5px 5px 0; border:none; border-radius:4px; background:#0984e3; color:white; cursor:pointer; }
   button:hover { background:#0652dd; }
   #summary, #meta { margin:10px 0; font-weight:bold; }
@@ -37,7 +37,14 @@
   <!-- LEFT COLUMN: Search + Table -->
   <div class="left">
     <div class="controls">
-      <input type="text" id="query" placeholder="Keyword or Boolean query">
+      <select id="searchType">
+        <option value="keyword">Keyword</option>
+        <option value="title">Title</option>
+        <option value="author">Author</option>
+        <option value="doi">DOI</option>
+        <option value="institution">Institution</option>
+      </select>
+      <input type="text" id="query" placeholder="Enter search text">
       <input type="number" id="yearFrom" placeholder="From Year">
       <input type="number" id="yearTo" placeholder="To Year">
       <button onclick="searchAll()">Search</button>
@@ -85,11 +92,12 @@ let authorChartInstance = null;
 
 // SEARCH
 async function searchAll() {
+    let type = document.getElementById("searchType").value;
     let query = document.getElementById("query").value.trim();
     let yearFrom = document.getElementById("yearFrom").value;
     let yearTo = document.getElementById("yearTo").value;
 
-    if(!query){ alert("Please enter a search query"); return; }
+    if(!query){ alert("Please enter search text"); return; }
 
     document.getElementById("loading").style.display = "block";
     papers = [];
@@ -100,7 +108,7 @@ async function searchAll() {
 
     try {
         query = cleanQuery(query);
-        let crossrefData = await fetchCrossRef(query);
+        let crossrefData = await fetchCrossRef(query, type);
         prismaCounts.retrieved = crossrefData.length;
 
         papers = mergeData(crossrefData);
@@ -126,8 +134,14 @@ async function searchAll() {
 }
 
 // FETCH CROSSREF
-async function fetchCrossRef(query) {
-    let url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=1000`;
+async function fetchCrossRef(query, type) {
+    let url = `https://api.crossref.org/works?rows=1000`;
+    if(type==="title") url += `&query.title=${encodeURIComponent(query)}`;
+    else if(type==="author") url += `&query.author=${encodeURIComponent(query)}`;
+    else if(type==="doi") url += `&filter=doi:${encodeURIComponent(query)}`;
+    else if(type==="institution") url += `&query.affiliation=${encodeURIComponent(query)}`;
+    else url += `&query=${encodeURIComponent(query)}`; // keyword default
+
     let res = await fetch(url, { headers:{ "User-Agent":"SystematicReviewDashboard/1.0" } });
     let data = await res.json();
     return data.message.items;
