@@ -1,55 +1,86 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Systematic review explorer</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    input { margin: 5px; padding: 5px; }
-    button { margin: 5px; padding: 5px 10px; cursor: pointer; }
-    #results div { margin-bottom: 15px; }
-    canvas { margin-top: 20px; max-width: 800px; height: 400px; }
-    hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
-  </style>
+<meta charset="UTF-8">
+<title>Systematic review dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; margin:20px; background:#f5f6fa; color:#2d3436; }
+  h2 { margin-bottom:20px; color:#0984e3; }
+  .controls { margin-bottom:20px; }
+  input { padding:8px; margin:5px; border-radius:4px; border:1px solid #ccc; }
+  button { padding:8px 15px; margin:5px; border:none; border-radius:4px; background:#0984e3; color:white; cursor:pointer; }
+  button:hover { background:#0652dd; }
+  #summary { margin:15px 0; font-weight:bold; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; background:white; border-radius:6px; overflow:hidden; }
+  th, td { padding:10px; border-bottom:1px solid #ddd; text-align:left; font-size:14px; }
+  th { background:#0984e3; color:white; }
+  tr:hover { background:#f1f2f6; }
+  #charts { display:flex; flex-wrap:wrap; gap:20px; margin-top:20px; }
+  canvas { background:white; border-radius:6px; padding:10px; flex:1 1 400px; }
+  #loading { display:none; margin:20px 0; font-weight:bold; color:#d63031; }
+</style>
 </head>
 <body>
 
-<h2>🔍 Systematic Review Explorer</h2>
+<h2>Systematic review dashboard</h2>
 
-<input type="text" id="query" placeholder="Enter keyword or Boolean query">
-<input type="number" id="yearFrom" placeholder="From Year">
-<input type="number" id="yearTo" placeholder="To Year">
+<div class="controls">
+  <input type="text" id="query" placeholder="Enter keyword or Boolean query">
+  <input type="number" id="yearFrom" placeholder="From Year">
+  <input type="number" id="yearTo" placeholder="To Year">
+  <button onclick="searchAll()">Search</button>
+  <button onclick="downloadCSV()">Download CSV</button>
+</div>
 
-<button onclick="searchAll()">Search</button>
-<button onclick="downloadCSV()">Download CSV</button>
+<div id="loading">🔄 Fetching papers, please wait...</div>
 
 <h3 id="summary"></h3>
 
-<div id="results"></div>
+<div id="resultsContainer">
+  <table id="resultsTable">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Authors</th>
+        <th>Journal</th>
+        <th>Year</th>
+        <th>DOI</th>
+      </tr>
+    </thead>
+    <tbody id="results"></tbody>
+  </table>
+</div>
 
-<canvas id="trendChart"></canvas>
-<canvas id="authorChart"></canvas>
+<div id="charts">
+  <canvas id="trendChart"></canvas>
+  <canvas id="authorChart"></canvas>
+</div>
 
 <script>
 let papers = [];
 let prismaCounts = {retrieved:0, duplicates:0, afterYear:0};
+let trendChartInstance = null;
+let authorChartInstance = null;
 
-// MAIN FUNCTION
+// MAIN SEARCH
 async function searchAll() {
+    let query = document.getElementById("query").value.trim();
+    let yearFrom = document.getElementById("yearFrom").value;
+    let yearTo = document.getElementById("yearTo").value;
+
+    if(!query){ alert("Please enter a search query"); return; }
+
+    document.getElementById("loading").style.display = "block";
+    papers = [];
+    prismaCounts = {retrieved:0, duplicates:0, afterYear:0};
+    displaySummary();
+    clearResults();
+    clearCharts();
+
     try {
-        let query = document.getElementById("query").value;
-        let yearFrom = document.getElementById("yearFrom").value;
-        let yearTo = document.getElementById("yearTo").value;
-
-        if (!query) {
-            alert("Please enter a search query");
-            return;
-        }
-
         query = cleanQuery(query);
-        console.log("Searching for:", query);
-
         let crossrefData = await fetchCrossRef(query);
         prismaCounts.retrieved = crossrefData.length;
 
@@ -63,148 +94,140 @@ async function searchAll() {
         displayResults();
         drawTrendChart(papers);
         drawAuthorChart(papers);
-
-    } catch (error) {
-        console.error("Error:", error);
-        alert("Something went wrong. Check console (F12).");
+    } catch(err) {
+        console.error(err);
+        alert("Error fetching papers. Check console.");
+    } finally {
+        document.getElementById("loading").style.display = "none";
     }
 }
 
-// FETCH CROSSREF (max 1000)
+// FETCH CROSSREF
 async function fetchCrossRef(query) {
-    let url = `https://api.crossref.org/works?query=${query}&rows=1000`;
-    let res = await fetch(url, { headers: { "User-Agent": "ResearchExplorer/1.0" } });
+    let url = `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=1000`;
+    let res = await fetch(url, { headers:{ "User-Agent":"SystematicReviewDashboard/1.0" } });
     let data = await res.json();
     return data.message.items;
 }
 
 // CLEAN QUERY
-function cleanQuery(query) {
-    return query.replace(/AND/gi," ").replace(/OR/gi," ").replace(/NOT/gi,"");
-}
+function cleanQuery(q){ return q.replace(/AND/gi," ").replace(/OR/gi," ").replace(/NOT/gi,""); }
 
 // MERGE DATA
-function mergeData(crossref) {
-    let merged = [];
-    crossref.forEach(p => {
+function mergeData(items){
+    let merged=[];
+    items.forEach(p=>{
         merged.push({
-            title: normalizeTitle(p.title?.[0] || "No title"),
+            title: normalizeTitle(p.title?.[0]||"No title"),
+            displayTitle: p.title?.[0]||"No title",
             authors: getAuthors(p),
             year: getYear(p),
-            doi: p.DOI || "",
-            journal: p["container-title"]?.[0] || ""
+            doi: p.DOI||"",
+            journal: p["container-title"]?.[0]||""
         });
     });
     return removeDuplicates(merged);
 }
 
-// NORMALIZE TITLE
-function normalizeTitle(title) {
-    return title.trim().toLowerCase().replace(/[^\w\s]/gi,"");
-}
+// NORMALIZE TITLE FOR DUPLICATE REMOVAL
+function normalizeTitle(title){ return title.trim().toLowerCase().replace(/[^\w\s]/gi,""); }
 
 // REMOVE DUPLICATES
-function removeDuplicates(data) {
+function removeDuplicates(data){
     let seen = new Set();
-    return data.filter(p => {
-        if (seen.has(p.title)) return false;
+    return data.filter(p=>{
+        if(seen.has(p.title)) return false;
         seen.add(p.title);
         return true;
     });
 }
 
-// FILTER BY YEAR
-function filterYear(data, from, to) {
-    return data.filter(p => {
-        if (!p.year) return true;
-        return (!from || p.year >= from) && (!to || p.year <= to);
+// FILTER YEAR
+function filterYear(data, from, to){
+    return data.filter(p=>{
+        if(!p.year) return true;
+        return (!from||p.year>=from)&&(!to||p.year<=to);
     });
 }
 
-// GET YEAR (published-print > published-online > created)
-function getYear(p) {
-    return p['published-print']?.['date-parts']?.[0]?.[0] ||
-           p['published-online']?.['date-parts']?.[0]?.[0] ||
-           p.created?.['date-parts']?.[0]?.[0] || null;
+// GET YEAR PREFER PRINT->ONLINE->CREATED
+function getYear(p){
+    return p['published-print']?.['date-parts']?.[0]?.[0]||
+           p['published-online']?.['date-parts']?.[0]?.[0]||
+           p.created?.['date-parts']?.[0]?.[0]||null;
 }
 
 // GET AUTHORS
-function getAuthors(p) {
-    if (!p.author) return "No authors";
+function getAuthors(p){
+    if(!p.author) return "No authors";
     return p.author.map(a=>`${a.given||""} ${a.family||""}`.trim()).join("; ");
 }
 
-// DISPLAY SUMMARY (PRISMA-style)
-function displaySummary() {
-    document.getElementById("summary").innerText =
+// DISPLAY SUMMARY
+function displaySummary(){
+    document.getElementById("summary").innerText=
         `Total retrieved: ${prismaCounts.retrieved}, Duplicates removed: ${prismaCounts.duplicates}, After year filter: ${prismaCounts.afterYear}`;
 }
 
 // DISPLAY RESULTS
-function displayResults() {
-    let html = "";
-    papers.forEach(p => {
-        html += `
-        <div>
-            <b>${p.title}</b><br>
-            ${p.authors}<br>
-            ${p.journal}<br>
-            ${p.year || "Year N/A"}<br>
-            DOI: <a href="https://doi.org/${p.doi}" target="_blank">${p.doi}</a>
-        </div><hr>`;
+function displayResults(){
+    let tbody=document.getElementById("results");
+    papers.forEach(p=>{
+        let row=document.createElement("tr");
+        row.innerHTML=`<td>${p.displayTitle}</td>
+                       <td>${p.authors}</td>
+                       <td>${p.journal}</td>
+                       <td>${p.year||"N/A"}</td>
+                       <td><a href="https://doi.org/${p.doi}" target="_blank">${p.doi}</a></td>`;
+        tbody.appendChild(row);
     });
-    document.getElementById("results").innerHTML = html;
 }
 
-// CSV DOWNLOAD
-function downloadCSV() {
-    let csv = "Title,Authors,Journal,Year,DOI\n";
-    papers.forEach(p => {
-        csv += `"${p.title}","${p.authors}","${p.journal}","${p.year}","${p.doi}"\n`;
-    });
-    let blob = new Blob([csv], { type: "text/csv" });
-    let link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "papers.csv";
+// CLEAR RESULTS
+function clearResults(){ document.getElementById("results").innerHTML=""; }
+
+// DOWNLOAD CSV
+function downloadCSV(){
+    if(!papers.length){ alert("No papers to download"); return; }
+    let csv="Title,Authors,Journal,Year,DOI\n";
+    papers.forEach(p=>{ csv+=`"${p.displayTitle}","${p.authors}","${p.journal}","${p.year}","${p.doi}"\n`; });
+    let blob=new Blob([csv], {type:"text/csv"});
+    let link=document.createElement("a");
+    link.href=URL.createObjectURL(blob);
+    link.download="papers.csv";
     link.click();
 }
 
+// CLEAR CHARTS
+function clearCharts(){
+    if(trendChartInstance) { trendChartInstance.destroy(); trendChartInstance=null; }
+    if(authorChartInstance) { authorChartInstance.destroy(); authorChartInstance=null; }
+}
+
 // TREND CHART
-function drawTrendChart(data) {
-    if (!window.Chart) return;
-    let count = {};
-    data.forEach(p => { if(p.year) count[p.year]=(count[p.year]||0)+1; });
-    let years = Object.keys(count).sort();
-    let values = years.map(y=>count[y]);
-    new Chart(document.getElementById("trendChart"), {
-        type: "line",
-        data: {
-            labels: years,
-            datasets: [{ label: "Publications", data: values, backgroundColor:"rgba(0,123,255,0.3)", borderColor:"rgba(0,80,200,1)", borderWidth:2, fill:true }]
-        },
-        options: { responsive:true, plugins:{ legend:{ display:true } } }
+function drawTrendChart(data){
+    let count={};
+    data.forEach(p=>{ if(p.year) count[p.year]=(count[p.year]||0)+1; });
+    let years=Object.keys(count).sort();
+    let values=years.map(y=>count[y]);
+    let ctx=document.getElementById("trendChart").getContext("2d");
+    trendChartInstance=new Chart(ctx,{
+        type:"line",
+        data:{ labels:years, datasets:[{label:"Publications", data:values, backgroundColor:"rgba(0,123,255,0.3)", borderColor:"rgba(0,80,200,1)", borderWidth:2, fill:true }]},
+        options:{ responsive:true, plugins:{ legend:{ display:true } } }
     });
 }
 
 // TOP AUTHORS CHART
-function drawAuthorChart(data) {
-    if (!window.Chart) return;
-    let count = {};
-    data.forEach(p=>{
-        p.authors.split(";").forEach(a=>{
-            let name = a.trim();
-            if(!name) return;
-            count[name]=(count[name]||0)+1;
-        });
-    });
-    let top = Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    new Chart(document.getElementById("authorChart"), {
+function drawAuthorChart(data){
+    let count={};
+    data.forEach(p=>{ p.authors.split(";").forEach(a=>{ let n=a.trim(); if(!n) return; count[n]=(count[n]||0)+1; }); });
+    let top=Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    let ctx=document.getElementById("authorChart").getContext("2d");
+    authorChartInstance=new Chart(ctx,{
         type:"bar",
-        data: {
-            labels: top.map(t=>t[0]),
-            datasets: [{ label:"Top Authors", data:top.map(t=>t[1]), backgroundColor:"rgba(255,99,132,0.6)", borderColor:"rgba(200,50,80,1)", borderWidth:1 }]
-        },
-        options: { responsive:true, indexAxis:'y', plugins:{ legend:{ display:true } } }
+        data:{ labels:top.map(t=>t[0]), datasets:[{label:"Top Authors", data:top.map(t=>t[1]), backgroundColor:"rgba(255,99,132,0.6)", borderColor:"rgba(200,50,80,1)", borderWidth:1 }]},
+        options:{ responsive:true, indexAxis:'y', plugins:{ legend:{ display:true } } }
     });
 }
 </script>
