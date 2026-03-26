@@ -1,19 +1,21 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Research Explorer</title>
+  <title>Systematic review explorer</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: Arial, sans-serif; margin: 20px; }
     input { margin: 5px; padding: 5px; }
     button { margin: 5px; padding: 5px 10px; cursor: pointer; }
     #results div { margin-bottom: 15px; }
     canvas { margin-top: 20px; max-width: 800px; height: 400px; }
+    hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
   </style>
 </head>
 <body>
 
-<h2>🔍 Research Explorer</h2>
+<h2>🔍 Systematic Review Explorer</h2>
 
 <input type="text" id="query" placeholder="Enter keyword or Boolean query">
 <input type="number" id="yearFrom" placeholder="From Year">
@@ -31,6 +33,7 @@
 
 <script>
 let papers = [];
+let prismaCounts = {retrieved:0, duplicates:0, afterYear:0};
 
 // MAIN FUNCTION
 async function searchAll() {
@@ -45,18 +48,16 @@ async function searchAll() {
         }
 
         query = cleanQuery(query);
-
         console.log("Searching for:", query);
 
         let crossrefData = await fetchCrossRef(query);
-
-        console.log("CrossRef Data:", crossrefData);
+        prismaCounts.retrieved = crossrefData.length;
 
         papers = mergeData(crossrefData);
+        prismaCounts.duplicates = prismaCounts.retrieved - papers.length;
 
         papers = filterYear(papers, yearFrom, yearTo);
-
-        console.log("Final Papers:", papers);
+        prismaCounts.afterYear = papers.length;
 
         displaySummary();
         displayResults();
@@ -69,21 +70,17 @@ async function searchAll() {
     }
 }
 
-// FETCH CROSSREF
+// FETCH CROSSREF (max 1000)
 async function fetchCrossRef(query) {
-    let url = `https://api.crossref.org/works?query=${query}&rows=50`;
-    let res = await fetch(url, {
-        headers: { "User-Agent": "ResearchExplorer/1.0" }
-    });
+    let url = `https://api.crossref.org/works?query=${query}&rows=1000`;
+    let res = await fetch(url, { headers: { "User-Agent": "ResearchExplorer/1.0" } });
     let data = await res.json();
     return data.message.items;
 }
 
 // CLEAN QUERY
 function cleanQuery(query) {
-    return query.replace(/AND/gi, " ")
-                .replace(/OR/gi, " ")
-                .replace(/NOT/gi, "");
+    return query.replace(/AND/gi," ").replace(/OR/gi," ").replace(/NOT/gi,"");
 }
 
 // MERGE DATA
@@ -91,7 +88,7 @@ function mergeData(crossref) {
     let merged = [];
     crossref.forEach(p => {
         merged.push({
-            title: p.title?.[0] || "No title",
+            title: normalizeTitle(p.title?.[0] || "No title"),
             authors: getAuthors(p),
             year: getYear(p),
             doi: p.DOI || "",
@@ -101,13 +98,17 @@ function mergeData(crossref) {
     return removeDuplicates(merged);
 }
 
+// NORMALIZE TITLE
+function normalizeTitle(title) {
+    return title.trim().toLowerCase().replace(/[^\w\s]/gi,"");
+}
+
 // REMOVE DUPLICATES
 function removeDuplicates(data) {
     let seen = new Set();
     return data.filter(p => {
-        let key = p.title.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
+        if (seen.has(p.title)) return false;
+        seen.add(p.title);
         return true;
     });
 }
@@ -120,22 +121,23 @@ function filterYear(data, from, to) {
     });
 }
 
-// GET YEAR
+// GET YEAR (published-print > published-online > created)
 function getYear(p) {
-    return p.created?.["date-parts"]?.[0]?.[0] || null;
+    return p['published-print']?.['date-parts']?.[0]?.[0] ||
+           p['published-online']?.['date-parts']?.[0]?.[0] ||
+           p.created?.['date-parts']?.[0]?.[0] || null;
 }
 
 // GET AUTHORS
 function getAuthors(p) {
     if (!p.author) return "No authors";
-    return p.author.map(a => `${a.given || ""} ${a.family || ""}`.trim())
-                   .join("; ");
+    return p.author.map(a=>`${a.given||""} ${a.family||""}`.trim()).join("; ");
 }
 
-// DISPLAY SUMMARY
+// DISPLAY SUMMARY (PRISMA-style)
 function displaySummary() {
     document.getElementById("summary").innerText =
-        `Total Papers Found: ${papers.length}`;
+        `Total retrieved: ${prismaCounts.retrieved}, Duplicates removed: ${prismaCounts.duplicates}, After year filter: ${prismaCounts.afterYear}`;
 }
 
 // DISPLAY RESULTS
@@ -171,30 +173,16 @@ function downloadCSV() {
 function drawTrendChart(data) {
     if (!window.Chart) return;
     let count = {};
-    data.forEach(p => {
-        if (!p.year) return;
-        count[p.year] = (count[p.year] || 0) + 1;
-    });
+    data.forEach(p => { if(p.year) count[p.year]=(count[p.year]||0)+1; });
     let years = Object.keys(count).sort();
-    let values = years.map(y => count[y]);
-
+    let values = years.map(y=>count[y]);
     new Chart(document.getElementById("trendChart"), {
         type: "line",
         data: {
             labels: years,
-            datasets: [{
-                label: "Publications",
-                data: values,
-                backgroundColor: "rgba(0,123,255,0.3)",
-                borderColor: "rgba(0,80,200,1)",
-                borderWidth: 2,
-                fill: true
-            }]
+            datasets: [{ label: "Publications", data: values, backgroundColor:"rgba(0,123,255,0.3)", borderColor:"rgba(0,80,200,1)", borderWidth:2, fill:true }]
         },
-        options: {
-            responsive: true,
-            plugins: { legend: { display: true } }
-        }
+        options: { responsive:true, plugins:{ legend:{ display:true } } }
     });
 }
 
@@ -202,34 +190,21 @@ function drawTrendChart(data) {
 function drawAuthorChart(data) {
     if (!window.Chart) return;
     let count = {};
-    data.forEach(p => {
-        p.authors.split(";").forEach(a => {
+    data.forEach(p=>{
+        p.authors.split(";").forEach(a=>{
             let name = a.trim();
-            if (!name) return;
-            count[name] = (count[name] || 0) + 1;
+            if(!name) return;
+            count[name]=(count[name]||0)+1;
         });
     });
-    let top = Object.entries(count)
-        .sort((a,b)=>b[1]-a[1])
-        .slice(0,10);
-
+    let top = Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,10);
     new Chart(document.getElementById("authorChart"), {
-        type: "bar",
+        type:"bar",
         data: {
             labels: top.map(t=>t[0]),
-            datasets: [{
-                label: "Top Authors",
-                data: top.map(t=>t[1]),
-                backgroundColor: "rgba(255,99,132,0.6)",
-                borderColor: "rgba(200,50,80,1)",
-                borderWidth: 1
-            }]
+            datasets: [{ label:"Top Authors", data:top.map(t=>t[1]), backgroundColor:"rgba(255,99,132,0.6)", borderColor:"rgba(200,50,80,1)", borderWidth:1 }]
         },
-        options: {
-            responsive: true,
-            indexAxis: 'y',
-            plugins: { legend: { display: true } }
-        }
+        options: { responsive:true, indexAxis:'y', plugins:{ legend:{ display:true } } }
     });
 }
 </script>
