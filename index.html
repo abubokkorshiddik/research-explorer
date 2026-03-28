@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Professional systematic review dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Segoe UI', Arial, sans-serif; background:#f0f2f5; color:#2d3436; padding:20px; }
@@ -13,206 +14,144 @@ p.description { margin-bottom:20px; font-size:14px; color:#636e72; }
 .left, .right { background:white; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
 .left { flex:1 1 60%; min-width:400px; }
 .right { flex:1 1 35%; min-width:300px; }
-select, input { padding:8px; margin:5px 5px 5px 0; border-radius:4px; border:1px solid #ccc; width:140px; }
-button { padding:8px 15px; margin:5px 5px 5px 0; border:none; border-radius:4px; background:#0984e3; color:white; cursor:pointer; }
+select, input { padding:8px; margin:5px; border-radius:4px; border:1px solid #ccc; }
+button { padding:8px 15px; border:none; border-radius:4px; background:#0984e3; color:white; cursor:pointer; }
 button:hover { background:#0652dd; }
-#summary, #meta { margin:10px 0; font-weight:bold; }
 table { width:100%; border-collapse:collapse; margin-top:10px; }
-th, td { padding:10px; border-bottom:1px solid #eee; font-size:14px; text-align:left; }
+th, td { padding:10px; border-bottom:1px solid #eee; font-size:14px; }
 th { background:#0984e3; color:white; }
-tr:hover { background:#f1f2f6; }
-.abstract { font-size:13px; margin-top:5px; color:#636e72; display:none; padding-left:5px; }
-.show-btn { font-size:12px; color:#0984e3; cursor:pointer; text-decoration:underline; background:none; border:none; padding:0; }
-#loading { display:none; margin:10px 0; font-weight:bold; color:#d63031; }
-#charts canvas { margin-bottom:20px; background:white; border-radius:8px; padding:10px; }
 footer { margin-top:30px; text-align:center; font-size:13px; color:#636e72; }
-#showAllAuthor { background:#00b894; margin-left:0; }
-#visitorBox { margin:10px 0; font-weight:bold; color:#00b894; }
 </style>
 </head>
+
 <body>
 
 <h2>Professional systematic review dashboard</h2>
-<div id="visitorBox">👀 Visitors: Loading...</div>
 
-<p class="description">Search, screen, and summarize relevant publications for systematic reviews.</p>
+<p class="description">
+Search, screen, and summarize publications for systematic reviews.
+</p>
 
 <div class="container">
   <div class="left">
-    <div class="controls">
-      <select id="searchType">
-        <option value="keyword">Keyword</option>
-        <option value="title">Title</option>
-        <option value="author">Author</option>
-        <option value="doi">DOI</option>
-        <option value="institution">Institution</option>
-      </select>
-      <input type="text" id="query" placeholder="Enter search text">
-      <input type="number" id="yearFrom" placeholder="From Year">
-      <input type="number" id="yearTo" placeholder="To Year">
-      <button onclick="searchAll()">Search</button>
-      <button onclick="downloadCSV()">Download CSV</button>
-    </div>
 
-    <div id="loading">🔄 Fetching papers, please wait...</div>
+    <select id="searchType">
+      <option value="keyword">Keyword</option>
+      <option value="title">Title</option>
+      <option value="author">Author</option>
+      <option value="institution">Institution</option>
+    </select>
+
+    <input type="text" id="query" placeholder="Enter search">
+    <button onclick="searchAll()">Search</button>
+    <button onclick="downloadCSV()">Download CSV</button>
+
     <div id="summary"></div>
 
-    <table id="resultsTable">
+    <table>
       <thead>
         <tr>
           <th>Title</th>
           <th>Authors</th>
-          <th>Journal</th>
           <th>Year</th>
-          <th>DOI</th>
         </tr>
       </thead>
       <tbody id="results"></tbody>
     </table>
+
   </div>
 
   <div class="right">
-    <h3>Meta-analysis</h3>
-    <div id="meta">Total papers: 0<br>Duplicates removed: 0<br>After year filter: 0</div>
-    <div id="charts">
-      <canvas id="trendChart"></canvas>
-      <canvas id="authorChart"></canvas>
-    </div>
+    <canvas id="chart"></canvas>
   </div>
 </div>
 
+<!-- ✅ FOOTER WITH VISITOR COUNT -->
 <footer>
-  © Md. Abu Bokkor Shiddik, Department of Statistics, Begum Rokeya University, Bangladesh.
+  © Md. Abu Bokkor Shiddik, Begum Rokeya University, Bangladesh.
+  <br>
+  👀 Total Visitors: <span id="visitorCount">Loading...</span>
 </footer>
 
 <script>
-let papers=[], prismaCounts={retrieved:0, duplicates:0, afterYear:0};
-let trendChartInstance=null, authorChartInstance=null, filteredAuthor=null;
 
-// ✅ VISITOR COUNTER
+// ================= VISITOR COUNTER =================
+// 🔥 IMPORTANT: use your UNIQUE key (change name if you want)
 async function updateVisitorCount() {
     try {
-        let res = await fetch("https://api.countapi.xyz/hit/abs-dashboard/visits");
+        let res = await fetch("https://api.countapi.xyz/hit/abs-shiddik-dashboard-2026/visits");
         let data = await res.json();
-        document.getElementById("visitorBox").innerText =
-            "👀 Visitors: " + data.value;
-    } catch (err) {
-        document.getElementById("visitorBox").innerText =
-            "👀 Visitors: unavailable";
+        document.getElementById("visitorCount").innerText = data.value;
+    } catch {
+        document.getElementById("visitorCount").innerText = "Error";
     }
 }
 updateVisitorCount();
 
 // ================= SEARCH =================
+let papers=[];
+
 async function searchAll(){
-    let type=document.getElementById("searchType").value;
-    let query=document.getElementById("query").value.trim();
-    let yearFrom=document.getElementById("yearFrom").value;
-    let yearTo=document.getElementById("yearTo").value;
-    if(!query){ alert("Please enter search text"); return; }
+    let query=document.getElementById("query").value;
+    if(!query){ alert("Enter search"); return; }
 
-    document.getElementById("loading").style.display="block";
-    papers=[]; prismaCounts={retrieved:0, duplicates:0, afterYear:0}; filteredAuthor=null;
-    displaySummary(); clearResults(); clearCharts();
+    let res=await fetch(`https://api.crossref.org/works?rows=200&query=${query}`);
+    let data=await res.json();
 
-    try{
-        query=query.replace(/AND|OR|NOT/gi," ");
-        let data=await fetchCrossRef(query,type);
-        prismaCounts.retrieved=data.length;
+    papers=data.message.items.map(p=>({
+        title:p.title?.[0]||"No title",
+        authors:(p.author||[]).map(a=>a.family).join(", "),
+        year:p.created?.["date-parts"]?.[0]?.[0]||""
+    }));
 
-        papers=mergeData(data);
-        prismaCounts.duplicates=prismaCounts.retrieved-papers.length;
-
-        papers=filterYear(papers,yearFrom,yearTo).filter(p=>p.authors&&p.authors.trim()!=="");
-        prismaCounts.afterYear=papers.length;
-
-        displaySummary(); displayResults(); drawTrendChart(papers); drawAuthorChart(papers);
-    }catch(err){ console.error(err); alert("Error fetching papers."); }
-    finally{ document.getElementById("loading").style.display="none"; }
+    displayResults();
+    drawChart();
 }
-
-// ================= API =================
-async function fetchCrossRef(query,type){
-    let url=`https://api.crossref.org/works?rows=1000`;
-    if(type==="title") url+=`&query.title=${encodeURIComponent(query)}`;
-    else if(type==="author") url+=`&query.author=${encodeURIComponent(query)}`;
-    else if(type==="doi") url+=`&filter=doi:${encodeURIComponent(query)}`;
-    else if(type==="institution") url+=`&query.affiliation=${encodeURIComponent(query)}`;
-    else url+=`&query=${encodeURIComponent(query)}`;
-    let res=await fetch(url);
-    let data=await res.json(); return data.message.items;
-}
-
-// ================= DATA =================
-function mergeData(items){
-    let merged=[];
-    items.forEach(p=>{ merged.push({
-        title:(p.title?.[0]||"No title").trim().toLowerCase(),
-        displayTitle:p.title?.[0]||"No title",
-        authors:getAuthors(p),
-        year:getYear(p),
-        doi:p.DOI||"",
-        journal:p["container-title"]?.[0]||"",
-        abstract:p.abstract||""
-    });});
-    return removeDuplicates(merged);
-}
-
-function removeDuplicates(data){
-    let seen=new Set();
-    return data.filter(p=>{ if(seen.has(p.title)) return false; seen.add(p.title); return true; });
-}
-function filterYear(data,from,to){ return data.filter(p=>{ if(!p.year) return true; return (!from||p.year>=from)&&(!to||p.year<=to); }); }
-function getYear(p){ return p['published-print']?.['date-parts']?.[0]?.[0]||p['published-online']?.['date-parts']?.[0]?.[0]||p.created?.['date-parts']?.[0]?.[0]||null; }
-function getAuthors(p){ if(!p.author) return ""; return p.author.map(a=>`${a.given||""} ${a.family||""}`.trim()).join("; "); }
 
 // ================= DISPLAY =================
-function displaySummary(){
-    document.getElementById("summary").innerText=
-        `Total retrieved: ${prismaCounts.retrieved}, Duplicates removed: ${prismaCounts.duplicates}, After year filter: ${prismaCounts.afterYear}`;
-    document.getElementById("meta").innerHTML=
-        `Total papers: ${prismaCounts.retrieved}<br>Duplicates removed: ${prismaCounts.duplicates}<br>After year filter: ${prismaCounts.afterYear}`;
-}
-
 function displayResults(){
-    let tbody=document.getElementById("results"); tbody.innerHTML="";
-    let data=filteredAuthor ? papers.filter(p=>p.authors.includes(filteredAuthor)) : papers;
-    data.forEach((p,i)=>{
-        let row=document.createElement("tr");
-        row.innerHTML=`<td>${p.displayTitle}</td>
-                         <td>${p.authors}</td>
-                         <td>${p.journal}</td>
-                         <td>${p.year||"N/A"}</td>
-                         <td><a href="https://doi.org/${p.doi}" target="_blank">${p.doi}</a></td>`;
-        tbody.appendChild(row);
+    let tbody=document.getElementById("results");
+    tbody.innerHTML="";
+    papers.forEach(p=>{
+        let row=`<tr>
+          <td>${p.title}</td>
+          <td>${p.authors}</td>
+          <td>${p.year}</td>
+        </tr>`;
+        tbody.innerHTML+=row;
     });
 }
 
 // ================= CSV =================
 function downloadCSV(){
-    if(!papers.length){ alert("No papers to download"); return; }
-    let csv="Title,Authors,Journal,Year,DOI\n";
-    papers.forEach(p=>{ csv+=`"${p.displayTitle}","${p.authors}","${p.journal}","${p.year}","${p.doi}"\n`; });
-    let blob=new Blob([csv],{type:"text/csv"});
-    let link=document.createElement("a"); link.href=URL.createObjectURL(blob); link.download="papers.csv"; link.click();
+    let csv="Title,Authors,Year\n";
+    papers.forEach(p=>{
+        csv+=`"${p.title}","${p.authors}","${p.year}"\n`;
+    });
+    let blob=new Blob([csv]);
+    let a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="papers.csv";
+    a.click();
 }
 
-// ================= CHARTS =================
-function clearCharts(){ if(trendChartInstance){trendChartInstance.destroy();} if(authorChartInstance){authorChartInstance.destroy();} }
-function drawTrendChart(data){
-    let count={}; data.forEach(p=>{ if(p.year) count[p.year]=(count[p.year]||0)+1; });
-    let ctx=document.getElementById("trendChart").getContext("2d");
-    trendChartInstance=new Chart(ctx,{ type:"line", data:{labels:Object.keys(count),datasets:[{label:"Publications",data:Object.values(count)}]} });
-}
-function drawAuthorChart(data){
-    let count={}; data.forEach(p=>{ p.authors.split(";").forEach(a=>{ if(a.trim()) count[a.trim()]=(count[a.trim()]||0)+1; }); });
-    let top=Object.entries(count).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    let ctx=document.getElementById("authorChart").getContext("2d");
-    authorChartInstance=new Chart(ctx,{ type:"bar", data:{labels:top.map(t=>t[0]),datasets:[{data:top.map(t=>t[1])}]}, options:{indexAxis:'y'} });
-}
+// ================= CHART =================
+function drawChart(){
+    let count={};
+    papers.forEach(p=>{
+        if(p.year) count[p.year]=(count[p.year]||0)+1;
+    });
 
-function clearResults(){ document.getElementById("results").innerHTML=""; }
+    new Chart(document.getElementById("chart"),{
+        type:"bar",
+        data:{
+            labels:Object.keys(count),
+            datasets:[{data:Object.values(count)}]
+        }
+    });
+}
 
 </script>
+
 </body>
 </html>
